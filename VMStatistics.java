@@ -18,7 +18,6 @@ public class VMStatistics{
 
   public void printStats(){
 
-    System.out.println("\n\n");
     System.out.println("Algorithm: " + this.evictionAlgo);
     System.out.println("Number of frames: " + this.numFrames);
     System.out.println("Total memory accesses: " + this.memoryAccesses);

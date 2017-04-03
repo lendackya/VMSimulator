@@ -3,6 +3,8 @@ import java.util.LinkedList;
 
 public class vmsim{
 
+  static boolean DEBUG = false; // turns debug on and off
+
   static CPU cpu;
   static Memory mem;
   static VMStatistics stats;
@@ -10,9 +12,7 @@ public class vmsim{
   static int numFrames;
   static int[] pageStream;
 
-  static boolean DEBUG = false; // turns debug on and off
-
-  static int clockHand; // index of the array
+  static int clockHand; // index of the array used in clock algorithm
 
   public static void main(String[] args){
 
@@ -36,27 +36,27 @@ public class vmsim{
 
       // Determinen Page Table Size
       long pageTableSize = (long) Math.pow(2,32)/4096;
-      System.out.println("Page Table Size: " + pageTableSize + " pages.\n\n");
+      System.out.println("Page Table Size: " + pageTableSize + " pages.\n");
 
       pageTable = new PageTable(pageTableSize);
       pageTable.setCurrentlyValid(new Page[numFrames]);
-      // MARK:: Begin Running Through Trace
 
-      // Begin running through InstructionSet
+      int refreshIndex = 0; // when to refresh
+
       // cpu.getInstructionSet().size()
-      int refreshIndex = 0;
 
+      // preprocess instructions if runing opt
       if (algoType.equals("opt")){ pageStream = preprocessInstrctionSet(cpu.getInstructionSet(), pageSize); }
 
+      // MARK:: Begin Running Through Trace
       for (int i = 0; i < cpu.getInstructionSet().size(); i++){
+
         if (DEBUG) pageTable.printCurrentlyValid();
+
         stats.memoryAccesses++; // increment memorory acccesses
         refreshIndex++;
 
-        if (i % 100000 == 0){
-          System.out.println(i);
-        }
-
+        // check if the table needs to be refreshed
         if (algoType.equals("nru") && (refreshIndex == refreshRate)){
            pageTable.refreshReferenceBits();
            refreshIndex = 0;
@@ -73,101 +73,48 @@ public class vmsim{
         // Look into the Page Table and see if that spot in PT is empty
         PTE pte = pageTable.getPageTableEntryAt( (int)pageNumber );
 
-        // we have seen this page before
-        if (pte.getFrameNumber() != -1){
+        // theres something in the page table at this page number..
+        if (DEBUG) System.out.println("Page: " + pageNumber);
+        if (DEBUG) System.out.println("Frame(-1 if not prev. seen): " + pte.getFrameNumber());
 
-          if (DEBUG) System.out.println("We've seen page " + pageNumber + " before.");
+        pte.update(true, inst.getMode() == 'W', i); // update reference, dirty and timestamp
 
-          // It becomes referenced
-          pte.setReferenceBit(true);
-          pte.setTimestamp(i); // update timestamp
+        // the page is currently in a frame..
+        if (pte.isValid()){
 
-          // if were writing to that page change the dirty bit
-          if (inst.getMode() == 'W'){ pte.setDirtyBit(true); } // its now dirty
-          else {pte.setDirtyBit(false); } // its clean
+          if (DEBUG) System.out.println("Page Hit! Page is in frame " + Integer.toString(pte.getFrameNumber()));
 
-          if (DEBUG) System.out.println(pte.getFrameNumber());
+        }else if (pte.isValid() == false){ // not it frame
 
-          // the page is currently in a frame..
-          if (pte.isValid()){
-
-            if (DEBUG) System.out.println("Page Hit! Page is in frame " + Integer.toString(pte.getFrameNumber()));
-
-          }else if (pte.isValid() == false){ // not it frame
-            // get it from disk
-            if (DEBUG) System.out.println("Page Fault!");
-            stats.pageFaults++;
-
-            // All the frames are full
-            if (mem.isFull()){
-
-              if(DEBUG) System.out.println("Frames Full\n");
-
-              // Evict a page using the specified Eviction Algorithm
-              pte.setTimestamp(i); // update timestamp
-              runEvictionAlgo(algoType, pte, pageNumber);
-
-            }else if (mem.isFull() == false){
-
-
-              // Find open frame, put page in the frame, and set the frame number
-              // in the Page Table.
-              Frame freeFrame = mem.getFirstFreeFrame();
-
-              Page page = new Page(pageNumber);
-              mem.putPageInFrame(page, freeFrame.getNumber());
-              pte.setFrameNumber(freeFrame.getNumber()); // update the frame its in
-              pte.setValidBit(true); // its in frame, so its valid
-
-              if (DEBUG) System.out.println(pageNumber + " was put in frame " + freeFrame.getNumber());
-              pageTable.getCurrentlyValid()[freeFrame.getNumber()] = page;
-            }
-          }
-        }
-
-        // we have not seen this page before
-        else{
-
-          // theres something in the page table at this page number..
-          if (DEBUG) System.out.println("Have NOT seen page " + pageNumber + " before");
-
-          if (DEBUG) System.out.println(pte.getFrameNumber());
-
-          // It becomes referenced!
-          pte.setReferenceBit(true);
-          pte.setTimestamp(i); // update timestamp
-
-          // if were writing to that page
-          if (inst.getMode() == 'W'){ pte.setDirtyBit(true); } // its now dirty
-          else {pte.setDirtyBit(false); } // its clean
+          if (DEBUG) System.out.println("Page Fault! Page " + pageNumber + " is not in a frame.");
+          stats.pageFaults++;
 
           // if memory is full..
           if (mem.isFull()){
             if(DEBUG) System.out.println("Frames Full");
 
-            // run eviction algo and put in evicted frame
-            runEvictionAlgo(algoType, pte, pageNumber);
-
-          }else{
+            runEvictionAlgo(algoType, pte, pageNumber); // run eviction algo
+          }else{ // memory is not full
             Frame freeFrame = mem.getFirstFreeFrame(); // find open frame
-            Page page = new Page(pageNumber);
+
+            Page page = new Page(pageNumber); // create new page
             mem.putPageInFrame(page, freeFrame.getNumber()); // put page in frame
-            pte.setFrameNumber(freeFrame.getNumber()); // update the pte
-            pte.setValidBit(true);
+
+            pte.setFrameNumber(freeFrame.getNumber()); // update the pte frame number
+            pte.setValidBit(true); // set the valid bit
+
             if (DEBUG) System.out.println(pageNumber + " was put in frame " + freeFrame.getNumber());
             pageTable.getCurrentlyValid()[freeFrame.getNumber()] = page; // update the currently valid array
-          }
+            }
         }
       }
 
       stats.printStats(); // print the statistics to the user
 
     }else{
-
       System.out.println("Command line arguements must follow: –n <numframes> -a <opt|clock|nru|rand> [-r <refresh>] <tracefile>");
-    }
-  }
-
+    } // end if-else
+  } // end main
 
   /**
    * Runs the specified eviction algorithm on the Page Table.
@@ -175,27 +122,28 @@ public class vmsim{
    **/
   public static void runEvictionAlgo(String evictionAlgo, PTE pte, long pageNumber){
 
-    //pageTable.printCurrentlyValid();
-
     if (evictionAlgo.equals("clock")){ Clock(pte, pageNumber); } // run CLocl
 
     if (evictionAlgo.equals("opt")){ Opt(pte, pageNumber); } // run Opt
 
-    if (evictionAlgo.equals("random")){ Random(pte, pageNumber); } // run Random
+    if (evictionAlgo.equals("rand")){ Random(pte, pageNumber); } // run Random
 
     if (evictionAlgo.equals("nru")){ NRU(pte, pageNumber); }  // run NRU
 
-  } // end runEvictionAlgo
+  }
+
+  // MARK :: Eviction Algorithms Code
 
   /**
    * Runs the NRU replacement algotithm.
    **/
   public static void NRU(PTE pte, long pageNumber){
+
     PTE evictedPTE;
 
     // find entries clean and unreferenced entries - 1st priority
     PTE cleanUnreferencedPTE = pageTable.searchPageTableFor(false, false, true);
-    //System.out.println("C & U: " + cleanUnreferencedPTEs.size() );
+    //if (DEBUG) System.out.println("C & U: " + cleanUnreferencedPTEs.size() );
     evictedPTE = cleanUnreferencedPTE;
 
     // if we dont find the highest priority, we go down to the 2nd, 3rd, 4th..
@@ -203,21 +151,21 @@ public class vmsim{
 
       // find clean and referenced entries - 2nd priority
       PTE dirtyUnreferencedPTE = pageTable.searchPageTableFor(true, false, true);
-      //System.out.println("D & U: " + dirtyUnreferencedPTEs.size() );
+      //if (DEBUG) System.out.println("D & U: " + dirtyUnreferencedPTEs.size() );
       evictedPTE = dirtyUnreferencedPTE;
 
       if (dirtyUnreferencedPTE == null){
 
         // find unclean unreferenced entries - 3rd priority
         PTE cleanReferencedPTE = pageTable.searchPageTableFor(false, true, true);
-        //System.out.println("C & R: " + cleanReferencedPTEs.size() );
+        //if (DEBUG) System.out.println("C & R: " + cleanReferencedPTEs.size() );
         evictedPTE = cleanReferencedPTE;
 
         if (cleanReferencedPTE == null){
 
           // find unclean referenced entries - 4th priority
           PTE dirtyReferencedPTE = pageTable.searchPageTableFor(true, true, true);
-          //System.out.println("D & R: " + dirtyReferencedPTEs.size() );
+          //if (DEBUG) System.out.println("D & R: " + dirtyReferencedPTEs.size() );
           evictedPTE = dirtyReferencedPTE;
         }
       }
@@ -226,9 +174,12 @@ public class vmsim{
     // Give the PTE a frame number and evict the page from the frame, setting the evicted page number to unvalid
     // and add a new Page in the evicted frame
     if (DEBUG) System.out.println("Evicting from frame: " + evictedPTE.getFrameNumber());
-    pte.setFrameNumber(evictedPTE.getFrameNumber());
+
+    pte.setFrameNumber(evictedPTE.getFrameNumber()); // update frame
+
     Page evictedPage = mem.evictPageFromFrame(evictedPTE.getFrameNumber());
     Page newPage = new Page(pageNumber);
+
     mem.putPageInFrame(newPage, pte.getFrameNumber() );
     pte.setValidBit(true);
     pageTable.getEntries()[(int)evictedPage.getPageNumber()].setValidBit(false); // no longer in memory, un valid bit
@@ -237,7 +188,6 @@ public class vmsim{
     // if the evicted page is dirty
     if (pageTable.getEntries()[(int)evictedPage.getPageNumber()].isDirty()){
       // write back to disk
-      if (DEBUG) System.out.println("Writing back to disk.");
       stats.writesToDisks++;
       pageTable.getEntries()[(int)evictedPage.getPageNumber()].setDirtyBit(false); // unmark as dirty
     }
@@ -256,19 +206,26 @@ public class vmsim{
 
     // evict from random frame
     Frame frameToEvictFrom = mem.getFrames()[n];
-    if (DEBUG) System.out.println("Evicting From Frame: " + frameToEvictFrom.getNumber());
-    Page evictedPage = mem.evictPageFromFrame(frameToEvictFrom.getNumber());
+    int frameNum = frameToEvictFrom.getNumber();
+
+    // if (DEBUG)
+    System.out.println("Evicting From Frame: " + frameNum);
+    Page evictedPage = mem.evictPageFromFrame(frameNum);
+    pageTable.getEntries()[(int)evictedPage.getPageNumber()].setValidBit(false); // evicted page is not in memory anymore
 
     // put page in frame and write it to the Page Table
-    mem.putPageInFrame(new Page(pageNumber), frameToEvictFrom.getNumber() );
+    Page newPage = new Page(pageNumber);
+
+    mem.putPageInFrame(newPage, frameNum );
     pte.setFrameNumber(frameToEvictFrom.getNumber()); // update the frame number
     pte.setValidBit(true); // set the valid bit to true
-    pageTable.getEntries()[(int)evictedPage.getPageNumber()].setValidBit(false);
+
+    pageTable.getCurrentlyValid()[frameNum] = newPage;
 
     // if the evicted page is dirty
     if (pageTable.getEntries()[(int)evictedPage.getPageNumber()].isDirty()){
       // write back to disk
-      if (DEBUG) System.out.println("Writing back to disk.");
+      System.out.println("Writing back to disk");
       stats.writesToDisks++;
       pageTable.getEntries()[(int)evictedPage.getPageNumber()].setDirtyBit(false); // unmark as dirty
     }
@@ -278,12 +235,14 @@ public class vmsim{
    * Runs the Clock replacement algotithm.
    **/
   public static void Clock(PTE pte, long pageNumber){
-    boolean cont;
-    cont = true;
+    boolean notFound = true;
     PTE currPTE;
 
-    while(cont){
-      currPTE = pageTable.getEntries()[(int)pageTable.getCurrentlyValid()[clockHand].getPageNumber()]; // keeps track of the current PTE being pointed at in array
+    while(notFound){
+
+      // keeps track of the current PTE being pointed at in array
+      currPTE = pageTable.getEntries()[(int)pageTable.getCurrentlyValid()[clockHand].getPageNumber()];
+
       // check to see if theres something in that spot
       if (currPTE != null){
 
@@ -295,15 +254,21 @@ public class vmsim{
           if (clockHand == pageTable.getCurrentlyValid().length - 1){ clockHand = 0; }
           else{ clockHand++; }
 
-        }else{
+        }else{ // reference bit is 0, evict from frame
 
-          // its 0, evict from frame
-          int frameNum = currPTE.getFrameNumber();
-          System.out.println("Evicting from frame " + frameNum);
+          int frameNum = currPTE.getFrameNumber(); // frame were evicting from
+          if (DEBUG) System.out.println("Evicting from frame " + frameNum);
+
           Page evictedPage = mem.evictPageFromFrame(frameNum);
+          pageTable.getEntries()[(int)evictedPage.getPageNumber()].setValidBit(false); // not in memory anymore
 
-          pte.setFrameNumber(frameNum);
-          pte.setValidBit(true);
+          Page newPage = new Page(pageNumber);
+          mem.putPageInFrame(newPage, frameNum); // put in frame
+
+          pte.setFrameNumber(frameNum); // update the frame number in pte
+          pte.setValidBit(true); // set the valid bit
+
+          pageTable.getCurrentlyValid()[(int)frameNum] = newPage;
 
           // advance clock hand
           if (clockHand == pageTable.getCurrentlyValid().length - 1){ clockHand = 0;}
@@ -314,7 +279,7 @@ public class vmsim{
             stats.writesToDisks++;
             pageTable.getEntries()[(int)evictedPage.getPageNumber()].setDirtyBit(false); // clean
           }
-          cont = false; // we can stop cause we found a page to evict
+          notFound = false; // we can stop cause we found a page to evict
         }
       }
     } // end while
@@ -327,63 +292,63 @@ public class vmsim{
    **/
   public static void Opt(PTE pte, long pageNumber){
 
-    double max = Double.NEGATIVE_INFINITY;
+    // used to keep track to see if a bigger instsSince is reached
+    double maxInstsSince = Double.NEGATIVE_INFINITY;
+
     Page pageToEvict; // what page we are going to evict
-    Frame frameToEvictFrom = null;
+    Frame frameToEvictFrom = null; // what frame were going to evict from
 
     // go through each page in the frame
     for (int i = 0; i < numFrames; i++){
 
       Page currPage = pageTable.getCurrentlyValid()[i]; // the page currently being looked at
       int currPageNumber = (int) currPage.getPageNumber(); // the page number of the current page
-      int seenIn = 0; // when this page number is seen again in the instrcution set
-      boolean wasSeen = false;
+      int instsSince = 0;
 
-      // loop through the pageStream
+      // loop through the pageStream, dont look to previous instructions
+      for (int j = stats.memoryAccesses - 1; j < pageStream.length; j++){
 
-      int counter = 0;
-      for (int j = stats.memoryAccesses; j < pageStream.length; j++){
+        instsSince++;
 
-        counter++; 
+        if (pageStream[j] == currPageNumber){ // we found the page in the instruction set
 
+          // update max if this is the furthest away from being used
+          if(instsSince > maxInstsSince){ maxInstsSince = instsSince; }
 
-         if (pageStream[j] == currPageNumber){
-           wasSeen = true; // this page was seen
-           seenIn = j;
+          pageToEvict = currPage; // update the page were gonna evict
+          frameToEvictFrom = mem.getFrames()[i]; // update frame to evict from
+          break; // dont care about further instance of this page
+        } // end if
 
-           // update the max value
-           if (seenIn > max){
-             max = seenIn;
-             pageToEvict = currPage; // update the page were gonna evict
-             frameToEvictFrom = mem.getFrames()[i];
-           } // end if
-
-           break; // exit inner loop when we find a match
-         } // end if
-
-
-
+        // so we dont have to search all instructions in page stream
+        // this page can be referenced later on or not anymore
+        // as soon as this surpasses the current highest value, we can stop looking and make this
+        // one the best page to remove.
+        if (instsSince > maxInstsSince){
+          maxInstsSince = instsSince;
+          pageToEvict = currPage; // update the page were gonna evict
+          frameToEvictFrom = mem.getFrames()[i]; // update frame
+          break;
+        }
        } // end inner loop
-
-       if (wasSeen == false){ // the page was not seen further on in the instruction
-         pageToEvict = currPage; // update the page were gonna evict
-         frameToEvictFrom = mem.getFrames()[i];
-       }
     } // end outer loop
 
-    // evict the page and update the page tabe
+    // evict the page and update the page tabel
     Page evictedPage = mem.evictPageFromFrame(frameToEvictFrom.getNumber());
     pageTable.getEntries()[(int) evictedPage.getPageNumber()].setValidBit(false); // not in memory anymore
 
-    Page newPage = new Page(pageNumber); // create new page
+    if (DEBUG) System.out.println("Evicting from frame: " + frameToEvictFrom.getNumber());
 
-    mem.putPageInFrame(newPage, frameToEvictFrom.getNumber());
-    //System.out.println("Page " + newPage.getPageNumber() + " was put in frame " + frameToEvictFrom.getNumber() + " " + newPage.getPageNumber());
-    pte.setValidBit(true);
-    pte.setFrameNumber(frameToEvictFrom.getNumber());
+    Page newPage = new Page(pageNumber); // create new page
+    mem.putPageInFrame(newPage, frameToEvictFrom.getNumber()); // put new page in evicted frame
+
+    if (DEBUG) System.out.println("Page " + newPage.getPageNumber() + " was put in frame " + frameToEvictFrom.getNumber() + " " + newPage.getPageNumber());
+    pte.setValidBit(true); // its in memory now
+    pte.setFrameNumber(frameToEvictFrom.getNumber()); // update frame number
 
     pageTable.getCurrentlyValid()[frameToEvictFrom.getNumber()] = newPage;
 
+    // write evicted page to disk if dirty
     if (pageTable.getEntries()[(int)evictedPage.getPageNumber()].isDirty()){
       // write it to disk
       stats.writesToDisks++;
@@ -392,6 +357,9 @@ public class vmsim{
   }
 
 
+  /**
+   * Preprocesses the InstructionSet to determine what pages are needed at each cycle.
+   **/
   private static int[] preprocessInstrctionSet(InstructionSet instructionSet, long pageSize){
 
     if (DEBUG) System.out.println("Preprocessing File\n");

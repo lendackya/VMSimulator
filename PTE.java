@@ -117,9 +117,8 @@ public class PTE{
   }
 
 
-  public void updatePTE(int frameNumber, boolean referenced, boolean dirty, long timestamp ){
+  public void update(boolean referenced, boolean dirty, long timestamp ){
 
-    this.frameNumber = frameNumber;
     this.reference = referenced;
     this.dirty = dirty;
     this.timestamp = timestamp;
